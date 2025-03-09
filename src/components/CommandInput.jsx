@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { parseCommand } from '../services/parser/commandParser';
+import { parseCommand } from '../services/parser/core/parserService';
 import { createEvent, getEvents } from '../services/calendar/calendarService';
 
 const CommandInput = () => {
@@ -7,6 +7,7 @@ const CommandInput = () => {
   const [processing, setProcessing] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [feedbackType, setFeedbackType] = useState('info'); // 'info', 'success', 'error'
+  const [suggestions, setSuggestions] = useState([]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -14,76 +15,94 @@ const CommandInput = () => {
     if (!command.trim()) {
       setFeedback('Inserisci un comando');
       setFeedbackType('info');
+      setSuggestions([]);
       return;
     }
     
     setProcessing(true);
     setFeedback('Elaborazione comando...');
     setFeedbackType('info');
+    setSuggestions([]);
     
     try {
-      // Analizza il comando
-      const parsedCommand = parseCommand(command);
+      // Analizza il comando con il nuovo parser
+      const result = await parseCommand(command);
+      const { commandSchema, validationResult } = result;
       
-      if (!parsedCommand.valid) {
-        setFeedback('Non ho capito il comando. Prova ad esempio: "Crea riunione domani alle 15"');
+      // Se il comando non è valido, mostra feedback e suggerimenti
+      if (!validationResult.isValid) {
+        setFeedback(validationResult.errors.join('. '));
         setFeedbackType('error');
+        setSuggestions(validationResult.suggestions);
+        setProcessing(false);
         return;
       }
       
       // Gestisci diversi tipi di azioni
-      switch (parsedCommand.action) {
+      switch (commandSchema.intent) {
         case 'create': {
-          // Prepara i dati dell'evento
-          const startTime = new Date();
-          if (parsedCommand.date) {
-            startTime.setFullYear(
-              parsedCommand.date.getFullYear(),
-              parsedCommand.date.getMonth(),
-              parsedCommand.date.getDate()
-            );
+          try {
+            // Converti lo schema in un evento Google Calendar
+            const eventData = commandSchema.toGoogleCalendarEvent();
+            
+            // Crea l'evento
+            await createEvent(eventData);
+            setFeedback('Evento creato con successo!');
+            setFeedbackType('success');
+          } catch (error) {
+            console.error('Errore durante la creazione dell\'evento:', error);
+            setFeedback('Errore durante la creazione dell\'evento: ' + error.message);
+            setFeedbackType('error');
           }
-          
-          if (parsedCommand.time) {
-            startTime.setHours(
-              parsedCommand.time.getHours(),
-              parsedCommand.time.getMinutes(),
-              0, 0
-            );
-          }
-          
-          // Crea l'evento
-          const endTime = new Date(startTime);
-          endTime.setHours(endTime.getHours() + 1); // Default: durata 1 ora
-          
-          const eventData = {
-            summary: parsedCommand.title,
-            description: parsedCommand.description || '',
-            start: {
-              dateTime: startTime.toISOString(),
-              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
-            },
-            end: {
-              dateTime: endTime.toISOString(),
-              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
-            }
-          };
-          
-          await createEvent(eventData);
-          setFeedback('Evento creato con successo!');
-          setFeedbackType('success');
           break;
         }
         
-        case 'read': {
+        case 'read':
+        case 'query': {
+          try {
+            // Converti lo schema in parametri di ricerca
+            const searchParams = commandSchema.toGoogleCalendarSearchParams();
+            
+            // Ottieni gli eventi
+            const events = await getEvents(
+              searchParams.timeMin, 
+              searchParams.timeMax, 
+              searchParams.maxResults
+            );
+            
+            if (events && events.length > 0) {
+              setFeedback(`Trovati ${events.length} eventi`);
+              setFeedbackType('success');
+              
+              // Qui in futuro si potrebbero visualizzare gli eventi trovati
+            } else {
+              setFeedback('Nessun evento trovato per i criteri specificati');
+              setFeedbackType('info');
+            }
+          } catch (error) {
+            console.error('Errore durante la ricerca degli eventi:', error);
+            setFeedback('Errore durante la ricerca: ' + error.message);
+            setFeedbackType('error');
+          }
+          break;
+        }
+        
+        case 'update': {
           // Per ora impostato solo come feedback
-          setFeedback('Funzionalità di visualizzazione eventi in arrivo');
+          setFeedback('Funzionalità di aggiornamento eventi in arrivo');
+          setFeedbackType('info');
+          break;
+        }
+        
+        case 'delete': {
+          // Per ora impostato solo come feedback
+          setFeedback('Funzionalità di eliminazione eventi in arrivo');
           setFeedbackType('info');
           break;
         }
         
         default:
-          setFeedback('Questa funzionalità non è ancora implementata');
+          setFeedback('Funzionalità non riconosciuta o non ancora implementata');
           setFeedbackType('info');
           break;
       }
@@ -125,12 +144,25 @@ const CommandInput = () => {
         </div>
       )}
       
+      {suggestions.length > 0 && (
+        <div className="suggestions">
+          <p>Suggerimenti:</p>
+          <ul>
+            {suggestions.map((suggestion, index) => (
+              <li key={index}>{suggestion}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      
       <div className="command-examples">
         <h3>Esempi di comandi:</h3>
         <ul>
           <li>"Crea riunione con Mario domani alle 10"</li>
           <li>"Aggiungi appuntamento dal dentista venerdì alle 15:30"</li>
           <li>"Mostra appuntamenti di lunedì"</li>
+          <li>"Quali eventi ho la prossima settimana?"</li>
+          <li>"Quando sono andato dal dentista l'ultima volta?"</li>
         </ul>
       </div>
     </div>
