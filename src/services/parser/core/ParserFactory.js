@@ -13,16 +13,17 @@ export class ParserFactory {
       // Se usare il parser regex anche quando è disponibile LLM
       useRegexFallback: config.useRegexFallback || true,
       
-      // Se usare esclusivamente il parser regex
-      useRegexOnly: config.useRegexOnly || true,
+      // Se usare esclusivamente il parser regex - Modificato a false come default
+      useRegexOnly: config.useRegexOnly || false,
       
       // Configurazione per LLM
       llm: {
-        apiKey: config.llmApiKey || null,
+        apiKey: config.llmApiKey || import.meta.env.VITE_GEMINI_API_KEY,
         endpoint: config.llmEndpoint || 'https://api.openai.com/v1',
         model: config.llmModel || 'gpt-3.5-turbo',
         maxTokens: config.llmMaxTokens || 150,
-        temperature: config.llmTemperature || 0.2
+        temperature: config.llmTemperature || 0.2,
+        ...config.llm
       },
       
       // Soglia di confidenza per accettare l'interpretazione
@@ -147,6 +148,7 @@ export class ParserFactory {
     };
   }
 }
-// Alla fine del file ParserFactory.js
+
+// Esporta un'istanza singleton
 const parserFactory = new ParserFactory();
 export default parserFactory;
