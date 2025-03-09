@@ -19,9 +19,8 @@ export class ParserFactory {
       // Configurazione per LLM
       llm: {
         apiKey: config.llmApiKey || import.meta.env.VITE_GEMINI_API_KEY,
-        endpoint: config.llmEndpoint || 'https://api.openai.com/v1',
-        model: config.llmModel || 'gpt-3.5-turbo',
-        maxTokens: config.llmMaxTokens || 150,
+        endpoint: config.llmEndpoint || 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
+        maxTokens: config.llmMaxTokens || 1024,
         temperature: config.llmTemperature || 0.2,
         ...config.llm
       },
@@ -44,7 +43,11 @@ export class ParserFactory {
     
     // Aggiorna la configurazione del LLM parser
     if (this.config.llm && this.config.llm.apiKey) {
-      this.llmParser = new LLMParser(this.config.llm);
+      this.llmParser.config = {
+        ...this.llmParser.config,
+        ...this.config.llm
+      };
+      this.llmParser.isConfigured = !!this.config.llm.apiKey;
     }
     
     // Indica se l'LLM è configurato correttamente
@@ -57,37 +60,17 @@ export class ParserFactory {
    * @returns {Promise<Object>} - Oggetto con parser e metodo scelto
    */
   async getBestParser(text) {
-    // Se è configurato per usare solo regex, restituisci quello
-    if (this.config.useRegexOnly || !this.isLLMConfigured) {
-      console.debug('Usando RegexParser (configurazione: useRegexOnly)');
+    // Se LLM non è configurato o è configurato per usare solo regex, usa regex
+    if (!this.isLLMConfigured || this.config.useRegexOnly) {
+      console.debug('Usando RegexParser (LLM non configurato o useRegexOnly=true)');
       return {
         parser: this.regexParser,
         method: 'regex'
       };
     }
     
-    // Altrimenti, confronta la confidenza dei due parser
-    const regexConfidence = await this.regexParser.getConfidence(text);
-    const llmConfidence = await this.llmParser.getConfidence(text);
-    
-    console.debug('Confronto confidenza:', { 
-      regex: regexConfidence, 
-      llm: llmConfidence, 
-      threshold: this.config.confidenceThreshold 
-    });
-    
-    // Se il parser regex ha sufficiente confidenza, usalo
-    if (regexConfidence >= this.config.confidenceThreshold && 
-        (regexConfidence >= llmConfidence || this.config.useRegexFallback)) {
-      console.debug('Usando RegexParser (maggiore confidenza)');
-      return {
-        parser: this.regexParser,
-        method: 'regex'
-      };
-    }
-    
-    // Altrimenti, usa l'LLM
-    console.debug('Usando LLMParser');
+    // Preferisci LLM per default
+    console.debug('Usando LLMParser (configurazione predefinita)');
     return {
       parser: this.llmParser,
       method: 'llm'
@@ -103,13 +86,55 @@ export class ParserFactory {
     console.debug('ParserFactory.parseCommand chiamato con:', text);
     
     // Ottieni il parser più adatto
-    const { parser } = await this.getBestParser(text);
+    const { parser, method } = await this.getBestParser(text);
     
-    // Analizza il comando
-    const result = await parser.parseCommand(text);
-    console.debug('ParserFactory risultato parsing:', result);
-    
-    return result;
+    try {
+      // Analizza il comando
+      const result = await parser.parseCommand(text);
+      console.debug(`ParserFactory risultato parsing (${method}):`, result);
+      
+      // Se il parser LLM fallisce, prova con regex come fallback
+      if (method === 'llm' && (!result.intent || !result.isValid) && this.config.useRegexFallback) {
+        console.debug('Tentativo di parsing con RegexParser come fallback');
+        try {
+          const regexResult = await this.regexParser.parseCommand(text);
+          
+          // Se il fallback ha risultati migliori, usalo
+          if (regexResult.intent && (regexResult.isValid || !result.isValid)) {
+            console.debug('Fallback a RegexParser riuscito');
+            return regexResult;
+          }
+        } catch (fallbackError) {
+          console.debug('Fallback a RegexParser fallito:', fallbackError);
+        }
+      }
+      
+      return result;
+    } catch (error) {
+      console.error(`Errore durante il parsing con ${method}:`, error);
+      
+      // Se c'è un errore e stiamo usando LLM, prova con regex
+      if (method === 'llm' && this.config.useRegexFallback) {
+        console.debug('Tentativo di parsing con RegexParser dopo errore');
+        try {
+          return await this.regexParser.parseCommand(text);
+        } catch (fallbackError) {
+          console.error('Anche il parsing di fallback è fallito:', fallbackError);
+        }
+      }
+      
+      // Restituisci uno schema vuoto in caso di errore
+      return {
+        intent: null,
+        isValid: false,
+        parsingMetadata: {
+          method,
+          rawText: text,
+          ambiguities: [`Errore durante il parsing: ${error.message}`],
+          missingInfo: []
+        }
+      };
+    }
   }
   
   /**
@@ -126,13 +151,13 @@ export class ParserFactory {
     
     // Aggiorna la configurazione dell'LLM parser se necessario
     if (newConfig.llm) {
-      // Crea una nuova istanza di LLMParser con la configurazione aggiornata
-      this.llmParser = new LLMParser({
-        ...this.config.llm,
+      this.llmParser.config = {
+        ...this.llmParser.config,
         ...newConfig.llm
-      });
+      };
       
-      this.isLLMConfigured = !!this.config.llm.apiKey && !this.config.useRegexOnly;
+      this.llmParser.isConfigured = !!this.llmParser.config.apiKey;
+      this.isLLMConfigured = this.llmParser.isConfigured && !this.config.useRegexOnly;
     }
   }
   
@@ -144,7 +169,8 @@ export class ParserFactory {
     return {
       useRegexOnly: this.config.useRegexOnly,
       isLLMConfigured: this.isLLMConfigured,
-      confidenceThreshold: this.config.confidenceThreshold
+      confidenceThreshold: this.config.confidenceThreshold,
+      llmApiConfigured: !!this.config.llm.apiKey
     };
   }
 }
