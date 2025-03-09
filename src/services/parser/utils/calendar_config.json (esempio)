@@ -1,0 +1,35 @@
+{
+  "includeEventTypeInTitle": false,
+  "defaultDuration": 60,
+  "defaultLimit": 10,
+  "exampleCommands": [
+    "Comando: \"Crea un evento chiamato riunione di team per domani alle 10\"\nOutput: {\"intent\": \"create\", \"confidence\": 0.95, \"eventData\": {\"title\": \"riunione di team\", \"description\": null, \"location\": null, \"participants\": []}, \"timeData\": {\"startDate\": \"2025-03-10\", \"startTime\": \"10:00\", \"endDate\": \"2025-03-10\", \"endTime\": \"11:00\", \"duration\": 60, \"recurrence\": null}}",
+    "Comando: \"Aggiungi appuntamento dal dentista giovedì alle 15\"\nOutput: {\"intent\": \"create\", \"confidence\": 0.97, \"eventData\": {\"title\": \"dal dentista\", \"description\": null, \"location\": \"studio dentistico\", \"participants\": []}, \"timeData\": {\"startDate\": \"2025-03-13\", \"startTime\": \"15:00\", \"endDate\": \"2025-03-13\", \"endTime\": \"16:00\", \"duration\": 60, \"recurrence\": null}}",
+    "Comando: \"Ricordami di comprare il latte oggi pomeriggio\"\nOutput: {\"intent\": \"create\", \"confidence\": 0.92, \"eventData\": {\"title\": \"comprare il latte\", \"description\": null, \"location\": null, \"participants\": []}, \"timeData\": {\"startDate\": \"2025-03-09\", \"startTime\": \"15:00\", \"endDate\": \"2025-03-09\", \"endTime\": \"16:00\", \"duration\": 60, \"recurrence\": null}}",
+    "Comando: \"Mostra gli appuntamenti di oggi\"\nOutput: {\"intent\": \"read\", \"confidence\": 0.98, \"eventData\": {\"title\": null, \"description\": null, \"location\": null, \"participants\": []}, \"timeData\": {\"startDate\": null, \"startTime\": null, \"endDate\": null, \"endTime\": null, \"duration\": null, \"recurrence\": null}, \"queryData\": {\"timeRange\": {\"start\": \"2025-03-09T00:00:00\", \"end\": \"2025-03-09T23:59:59\"}, \"searchTerm\": null, \"filterType\": \"appuntamenti\", \"limit\": 10}}"
+  ],
+  "temporalExpressions": {
+    "oggi": "data corrente (00:00-23:59)",
+    "domani": "data corrente + 1 giorno (00:00-23:59)",
+    "dopodomani": "data corrente + 2 giorni (00:00-23:59)",
+    "ieri": "data corrente - 1 giorno (00:00-23:59)",
+    "questa settimana": "da oggi a domenica prossima",
+    "prossima settimana": "da lunedì prossimo a domenica prossima",
+    "questo mese": "da oggi a fine mese corrente",
+    "prossimo mese": "tutto il mese successivo",
+    "tra [X] giorni": "data corrente + X giorni",
+    "tra [X] settimane": "data corrente + (X * 7) giorni"
+  },
+  "titlePatterns": {
+    "namedEvent": [
+      "(?:chiamat[oa]|intitolat[oa]|denominat[oa])\\s+['\"]?([^'\"]+?)['\"]?(?:\\s+per|\\s+il|\\s+alle|\\s+a\\b|\\s*$)",
+      "(?:un|una|un'|l'|lo|la|gli|le)?\\s*(?:evento|appuntamento|meeting|riunione|incontro|promemoria)?\\s*(?:chiamat[oa]|intitolat[oa]|denominat[oa])\\s+['\"]?([^'\"]+?)['\"]?(?:\\s+per|\\s+il|\\s+alle|\\s+a\\b|\\s*$)"
+    ],
+    "reminder": [
+      "ricordami\\s+di\\s+(.+?)(?:\\s+per|\\s+il|\\s+alle|\\s+a\\b|\\s*$)"
+    ],
+    "generic": [
+      "(?:crea|aggiungi|pianifica|organizza|metti)\\s+(?:un|uno|una|un'|l'|lo|la)?\\s*(.+?)(?:\\s+per|\\s+il|\\s+alle|\\s+a\\b|\\s*$)"
+    ]
+  }
+}

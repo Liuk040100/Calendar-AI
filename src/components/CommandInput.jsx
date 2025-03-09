@@ -8,11 +8,12 @@ const CommandInput = () => {
   const [command, setCommand] = useState('');
   const [processing, setProcessing] = useState(false);
   const [feedback, setFeedback] = useState('');
-  const [feedbackType, setFeedbackType] = useState('info'); // 'info', 'success', 'error'
+  const [feedbackType, setFeedbackType] = useState('info');
   const [suggestions, setSuggestions] = useState([]);
   const [debugInfo, setDebugInfo] = useState('');
   const [showDebug, setShowDebug] = useState(false);
   const [queryResults, setQueryResults] = useState(null);
+  const [pendingAction, setPendingAction] = useState(null); // Per azioni su eventi multipli
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -22,6 +23,7 @@ const CommandInput = () => {
       setFeedbackType('info');
       setSuggestions([]);
       setQueryResults(null);
+      setPendingAction(null);
       return;
     }
     
@@ -30,6 +32,7 @@ const CommandInput = () => {
     setFeedbackType('info');
     setSuggestions([]);
     setQueryResults(null);
+    setPendingAction(null);
     
     try {
       console.log('Elaborazione comando:', command);
@@ -74,248 +77,23 @@ const CommandInput = () => {
       // Gestisci diversi tipi di azioni
       switch (result.action) {
         case 'create': {
-          try {
-            // Crea un evento per Google Calendar
-            const eventData = {
-              summary: result.title,
-              description: result.description || '',
-              location: result.location || '',
-              start: {
-                dateTime: combineDateTime(result.date, result.time),
-                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
-              },
-              end: {
-                // Per ora impostiamo 1 ora di durata come default
-                dateTime: addHours(combineDateTime(result.date, result.time), 1),
-                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
-              }
-            };
-            
-            // Crea l'evento
-            const createdEvent = await createEvent(eventData);
-            setFeedback(`Evento "${result.title}" creato con successo!`);
-            setFeedbackType('success');
-            
-            // Mostra dettagli dell'evento creato
-            setQueryResults({
-              type: 'created',
-              events: [createdEvent]
-            });
-          } catch (error) {
-            console.error('Errore durante la creazione dell\'evento:', error);
-            setFeedback('Errore durante la creazione dell\'evento: ' + error.message);
-            setFeedbackType('error');
-          }
+          await handleCreateEvent(result);
           break;
         }
         
         case 'read':
         case 'query': {
-          try {
-            // Calcola intervallo di ricerca in base alla data
-            const today = new Date();
-            let timeMin, timeMax;
-            
-            if (result.timeRange && result.timeRange.start) {
-              timeMin = new Date(result.timeRange.start);
-            } else if (result.date) {
-              timeMin = new Date(result.date);
-            } else {
-              timeMin = today;
-            }
-            
-            if (result.timeRange && result.timeRange.end) {
-              timeMax = new Date(result.timeRange.end);
-            } else if (result.date) {
-              // Imposta fine giornata per la data specificata
-              timeMax = new Date(new Date(result.date).setHours(23, 59, 59, 999));
-            } else {
-              // Una settimana se non specificata
-              timeMax = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
-            }
-            
-            // Ottieni gli eventi
-            const events = await getEvents(
-              timeMin.toISOString(), 
-              timeMax.toISOString(), 
-              result.limit || 10
-            );
-            
-            if (events && events.length > 0) {
-              // Filtra gli eventi se c'è un termine di ricerca
-              let filteredEvents = events;
-              if (result.searchTerm) {
-                const searchTermLower = result.searchTerm.toLowerCase();
-                filteredEvents = events.filter(event => 
-                  event.summary.toLowerCase().includes(searchTermLower) ||
-                  (event.description && event.description.toLowerCase().includes(searchTermLower))
-                );
-              }
-              
-              if (filteredEvents.length > 0) {
-                setFeedback(`Trovati ${filteredEvents.length} eventi`);
-                setFeedbackType('success');
-                
-                // Visualizza i risultati
-                setQueryResults({
-                  type: 'query',
-                  events: filteredEvents,
-                  timeRange: {
-                    start: timeMin,
-                    end: timeMax
-                  }
-                });
-              } else {
-                setFeedback('Nessun evento corrispondente ai criteri di ricerca');
-                setFeedbackType('info');
-              }
-            } else {
-              setFeedback('Nessun evento trovato per il periodo specificato');
-              setFeedbackType('info');
-            }
-          } catch (error) {
-            console.error('Errore durante la ricerca degli eventi:', error);
-            setFeedback('Errore durante la ricerca: ' + error.message);
-            setFeedbackType('error');
-          }
+          await handleQueryEvents(result);
           break;
         }
         
         case 'update': {
-          try {
-            // Cerca eventi esistenti con il titolo specificato
-            const today = new Date();
-            const oneMonthLater = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
-            const existingEvents = await getEvents(
-              today.toISOString(),
-              oneMonthLater.toISOString(),
-              10
-            );
-            
-            // Filtra per trovare l'evento con il titolo corrispondente
-            const matchingEvents = existingEvents.filter(event => 
-              event.summary.toLowerCase().includes(result.title.toLowerCase())
-            );
-            
-            if (matchingEvents.length === 0) {
-              setFeedback(`Nessun evento trovato con il titolo "${result.title}"`);
-              setFeedbackType('error');
-              break;
-            }
-            
-            if (matchingEvents.length > 1) {
-              setFeedback(`Trovati più eventi con titolo simile a "${result.title}". Specifica meglio quale evento vuoi modificare.`);
-              setFeedbackType('info');
-              setQueryResults({
-                type: 'multiple_match',
-                events: matchingEvents
-              });
-              break;
-            }
-            
-            // Prendi il primo evento corrispondente
-            const eventToUpdate = matchingEvents[0];
-            
-            // Prepara i dati per l'aggiornamento
-            const updatedEventData = {
-              ...eventToUpdate,
-              summary: result.title || eventToUpdate.summary
-            };
-            
-            // Aggiorna descrizione se specificata
-            if (result.description) {
-              updatedEventData.description = result.description;
-            }
-            
-            // Aggiorna location se specificata
-            if (result.location) {
-              updatedEventData.location = result.location;
-            }
-            
-            // Aggiorna data e ora se specificate
-            if (result.date || result.time) {
-              const newStartDateTime = combineDateTime(
-                result.date || extractDate(eventToUpdate.start.dateTime),
-                result.time || extractTime(eventToUpdate.start.dateTime)
-              );
-              
-              updatedEventData.start = {
-                dateTime: newStartDateTime,
-                timeZone: eventToUpdate.start.timeZone
-              };
-              
-              // Mantieni la stessa durata
-              const originalDuration = new Date(eventToUpdate.end.dateTime) - new Date(eventToUpdate.start.dateTime);
-              updatedEventData.end = {
-                dateTime: new Date(new Date(newStartDateTime).getTime() + originalDuration).toISOString(),
-                timeZone: eventToUpdate.end.timeZone
-              };
-            }
-            
-            // Esegui l'aggiornamento
-            const updatedEvent = await updateEvent(eventToUpdate.id, updatedEventData);
-            
-            setFeedback(`Evento "${updatedEvent.summary}" aggiornato con successo!`);
-            setFeedbackType('success');
-            
-            // Mostra dettagli dell'evento aggiornato
-            setQueryResults({
-              type: 'updated',
-              events: [updatedEvent]
-            });
-          } catch (error) {
-            console.error('Errore durante l\'aggiornamento dell\'evento:', error);
-            setFeedback('Errore durante l\'aggiornamento: ' + error.message);
-            setFeedbackType('error');
-          }
+          await handleUpdateEvent(result);
           break;
         }
         
         case 'delete': {
-          try {
-            // Cerca eventi esistenti con il titolo specificato
-            const today = new Date();
-            const oneMonthLater = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
-            const existingEvents = await getEvents(
-              today.toISOString(),
-              oneMonthLater.toISOString(),
-              10
-            );
-            
-            // Filtra per trovare l'evento con il titolo corrispondente
-            const matchingEvents = existingEvents.filter(event => 
-              event.summary.toLowerCase().includes(result.title.toLowerCase())
-            );
-            
-            if (matchingEvents.length === 0) {
-              setFeedback(`Nessun evento trovato con il titolo "${result.title}"`);
-              setFeedbackType('error');
-              break;
-            }
-            
-            if (matchingEvents.length > 1) {
-              setFeedback(`Trovati più eventi con titolo simile a "${result.title}". Specifica meglio quale evento vuoi eliminare.`);
-              setFeedbackType('info');
-              setQueryResults({
-                type: 'multiple_match',
-                events: matchingEvents
-              });
-              break;
-            }
-            
-            // Prendi il primo evento corrispondente
-            const eventToDelete = matchingEvents[0];
-            
-            // Esegui l'eliminazione
-            await deleteEvent(eventToDelete.id);
-            
-            setFeedback(`Evento "${eventToDelete.summary}" eliminato con successo!`);
-            setFeedbackType('success');
-          } catch (error) {
-            console.error('Errore durante l\'eliminazione dell\'evento:', error);
-            setFeedback('Errore durante l\'eliminazione: ' + error.message);
-            setFeedbackType('error');
-          }
+          await handleDeleteEvent(result);
           break;
         }
         
@@ -335,39 +113,384 @@ const CommandInput = () => {
     }
   };
 
+  // Handler per la creazione di eventi
+  const handleCreateEvent = async (result) => {
+    try {
+      // Verifica che ci siano i dati minimi necessari
+      if (!result.title) {
+        setFeedback('Titolo dell\'evento mancante');
+        setFeedbackType('error');
+        setSuggestions(['Specifica un titolo per l\'evento']);
+        return;
+      }
+      
+      // Crea un evento per Google Calendar
+      const eventData = {
+        summary: result.title,
+        description: result.description || '',
+        location: result.location || '',
+        start: {
+          dateTime: combineDateTime(result.date, result.time),
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        },
+        end: {
+          // Per ora impostiamo 1 ora di durata come default
+          dateTime: addHours(combineDateTime(result.date, result.time), 1),
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        }
+      };
+      
+      // Crea l'evento
+      const createdEvent = await createEvent(eventData);
+      setFeedback(`Evento "${result.title}" creato con successo!`);
+      setFeedbackType('success');
+      
+      // Mostra dettagli dell'evento creato
+      setQueryResults({
+        type: 'created',
+        events: [createdEvent]
+      });
+    } catch (error) {
+      console.error('Errore durante la creazione dell\'evento:', error);
+      setFeedback('Errore durante la creazione dell\'evento: ' + error.message);
+      setFeedbackType('error');
+    }
+  };
+
+  // Handler per la query di eventi
+  const handleQueryEvents = async (result) => {
+    try {
+      // Calcola intervallo di ricerca in base ai dati
+      const today = new Date();
+      let timeMin, timeMax;
+      
+      // Se abbiamo un intervallo temporale specifico nella query
+      if (result.timeRange && result.timeRange.start) {
+        timeMin = new Date(result.timeRange.start);
+      } else if (result.date) {
+        timeMin = new Date(result.date);
+      } else {
+        timeMin = today;
+      }
+      
+      if (result.timeRange && result.timeRange.end) {
+        timeMax = new Date(result.timeRange.end);
+      } else if (result.date) {
+        // Imposta fine giornata per la data specificata
+        timeMax = new Date(new Date(result.date).setHours(23, 59, 59, 999));
+      } else {
+        // Una settimana se non specificata
+        timeMax = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
+      }
+      
+      console.log('Query eventi dal', timeMin, 'al', timeMax);
+      
+      // Ottieni gli eventi
+      const events = await getEvents(
+        timeMin.toISOString(), 
+        timeMax.toISOString(), 
+        result.limit || 10
+      );
+      
+      if (events && events.length > 0) {
+        // Filtra gli eventi se c'è un termine di ricerca
+        let filteredEvents = events;
+        if (result.searchTerm) {
+          const searchTermLower = result.searchTerm.toLowerCase();
+          filteredEvents = events.filter(event => 
+            (event.summary && event.summary.toLowerCase().includes(searchTermLower)) ||
+            (event.description && event.description.toLowerCase().includes(searchTermLower))
+          );
+        }
+        
+        if (filteredEvents.length > 0) {
+          // Check se c'era un intento nascosto di eliminazione
+          const originalCommand = result.originalText || command;
+          const hasDeleteIntent = /elimina|rimuovi|cancella/i.test(originalCommand);
+          
+          if (hasDeleteIntent && !result.searchTerm && !command.toLowerCase().includes('mostra')) {
+            setFeedback(`Trovati ${filteredEvents.length} eventi. Seleziona quale eliminare:`);
+            setFeedbackType('info');
+            setPendingAction('delete');
+          } else {
+            setFeedback(`Trovati ${filteredEvents.length} eventi`);
+            setFeedbackType('success');
+            setPendingAction(null);
+          }
+          
+          // Visualizza i risultati
+          setQueryResults({
+            type: 'query',
+            events: filteredEvents,
+            timeRange: {
+              start: timeMin,
+              end: timeMax
+            }
+          });
+        } else {
+          setFeedback('Nessun evento corrispondente ai criteri di ricerca');
+          setFeedbackType('info');
+        }
+      } else {
+        setFeedback('Nessun evento trovato per il periodo specificato');
+        setFeedbackType('info');
+      }
+    } catch (error) {
+      console.error('Errore durante la ricerca degli eventi:', error);
+      setFeedback('Errore durante la ricerca: ' + error.message);
+      setFeedbackType('error');
+    }
+  };
+
+  // Handler per l'aggiornamento di eventi
+  const handleUpdateEvent = async (result) => {
+    try {
+      // Trova gli eventi che corrispondono al titolo
+      const today = new Date();
+      const oneMonthLater = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+      
+      let timeMin = today;
+      let timeMax = oneMonthLater;
+      
+      // Se è specificata una data, usa quella per restringere la ricerca
+      if (result.date) {
+        const date = new Date(result.date);
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+        
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
+        
+        timeMin = startOfDay;
+        timeMax = endOfDay;
+      }
+      
+      const existingEvents = await getEvents(
+        timeMin.toISOString(),
+        timeMax.toISOString(),
+        10
+      );
+      
+      // Filtra per trovare l'evento con il titolo corrispondente
+      const matchingEvents = existingEvents.filter(event => 
+        event.summary && event.summary.toLowerCase().includes(result.title.toLowerCase())
+      );
+      
+      if (matchingEvents.length === 0) {
+        setFeedback(`Nessun evento trovato con il titolo "${result.title}"`);
+        setFeedbackType('error');
+        return;
+      }
+      
+      if (matchingEvents.length > 1) {
+        setFeedback(`Trovati più eventi con titolo simile a "${result.title}". Seleziona quale modificare:`);
+        setFeedbackType('info');
+        setQueryResults({
+          type: 'multiple_match',
+          events: matchingEvents
+        });
+        setPendingAction('update');
+        return;
+      }
+      
+      // Se c'è un solo evento corrispondente, aggiornalo
+      const eventToUpdate = matchingEvents[0];
+      await updateSelectedEvent(eventToUpdate, result);
+      
+    } catch (error) {
+      console.error('Errore durante l\'aggiornamento dell\'evento:', error);
+      setFeedback('Errore durante l\'aggiornamento: ' + error.message);
+      setFeedbackType('error');
+    }
+  };
+
+  // Helper per aggiornare un evento selezionato
+  const updateSelectedEvent = async (eventToUpdate, result) => {
+    try {
+      // Prepara i dati per l'aggiornamento
+      const updatedEventData = {
+        ...eventToUpdate,
+        summary: result.title || eventToUpdate.summary
+      };
+      
+      // Aggiorna descrizione se specificata
+      if (result.description) {
+        updatedEventData.description = result.description;
+      }
+      
+      // Aggiorna location se specificata
+      if (result.location) {
+        updatedEventData.location = result.location;
+      }
+      
+      // Aggiorna data e ora se specificate
+      if (result.date || result.time) {
+        const newStartDateTime = combineDateTime(
+          result.date || new Date(eventToUpdate.start.dateTime),
+          result.time || new Date(eventToUpdate.start.dateTime)
+        );
+        
+        updatedEventData.start = {
+          dateTime: newStartDateTime,
+          timeZone: eventToUpdate.start.timeZone
+        };
+        
+        // Mantieni la stessa durata
+        const originalDuration = new Date(eventToUpdate.end.dateTime) - new Date(eventToUpdate.start.dateTime);
+        updatedEventData.end = {
+          dateTime: new Date(new Date(newStartDateTime).getTime() + originalDuration).toISOString(),
+          timeZone: eventToUpdate.end.timeZone
+        };
+      }
+      
+      // Esegui l'aggiornamento
+      const updatedEvent = await updateEvent(eventToUpdate.id, updatedEventData);
+      
+      setFeedback(`Evento "${updatedEvent.summary}" aggiornato con successo!`);
+      setFeedbackType('success');
+      
+      // Mostra dettagli dell'evento aggiornato
+      setQueryResults({
+        type: 'updated',
+        events: [updatedEvent]
+      });
+      setPendingAction(null);
+    } catch (error) {
+      console.error('Errore durante l\'aggiornamento dell\'evento:', error);
+      setFeedback('Errore durante l\'aggiornamento: ' + error.message);
+      setFeedbackType('error');
+      setPendingAction(null);
+    }
+  };
+
+  // Handler per l'eliminazione di eventi
+  const handleDeleteEvent = async (result) => {
+    try {
+      // Cerca eventi esistenti con il titolo specificato
+      const today = new Date();
+      const oneMonthLater = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+      
+      let timeMin = today;
+      let timeMax = oneMonthLater;
+      
+      // Se è specificata una data, usa quella per restringere la ricerca
+      if (result.date) {
+        const date = new Date(result.date);
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+        
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
+        
+        timeMin = startOfDay;
+        timeMax = endOfDay;
+      }
+      
+      const existingEvents = await getEvents(
+        timeMin.toISOString(),
+        timeMax.toISOString(),
+        10
+      );
+      
+      // Filtra per trovare eventi con il titolo corrispondente
+      const matchingEvents = existingEvents.filter(event => 
+        event.summary && event.summary.toLowerCase().includes(result.title.toLowerCase())
+      );
+      
+      if (matchingEvents.length === 0) {
+        setFeedback(`Nessun evento trovato con il titolo "${result.title}"`);
+        setFeedbackType('error');
+        return;
+      }
+      
+      if (matchingEvents.length > 1) {
+        setFeedback(`Trovati più eventi con titolo simile a "${result.title}". Seleziona quale eliminare:`);
+        setFeedbackType('info');
+        setQueryResults({
+          type: 'multiple_match',
+          events: matchingEvents
+        });
+        setPendingAction('delete');
+        return;
+      }
+      
+      // Se c'è un solo evento corrispondente, eliminalo
+      const eventToDelete = matchingEvents[0];
+      await deleteSelectedEvent(eventToDelete);
+      
+    } catch (error) {
+      console.error('Errore durante l\'eliminazione dell\'evento:', error);
+      setFeedback('Errore durante l\'eliminazione: ' + error.message);
+      setFeedbackType('error');
+    }
+  };
+
+  // Helper per eliminare un evento selezionato
+  const deleteSelectedEvent = async (eventToDelete) => {
+    try {
+      // Esegui l'eliminazione
+      await deleteEvent(eventToDelete.id);
+      
+      setFeedback(`Evento "${eventToDelete.summary}" eliminato con successo!`);
+      setFeedbackType('success');
+      setQueryResults(null);
+      setPendingAction(null);
+    } catch (error) {
+      console.error('Errore durante l\'eliminazione dell\'evento:', error);
+      setFeedback('Errore durante l\'eliminazione: ' + error.message);
+      setFeedbackType('error');
+      setPendingAction(null);
+    }
+  };
+
+  // Handler per selezionare un evento dalla lista di risultati
+  const handleEventSelect = async (event) => {
+    if (!pendingAction) return;
+    
+    if (pendingAction === 'delete') {
+      await deleteSelectedEvent(event);
+    } else if (pendingAction === 'update') {
+      // Qui possiamo solo preparare l'evento per la modifica,
+      // ma avremmo bisogno di ulteriori input dall'utente.
+      // Per semplicità, aggiorniamo solo l'ora se era specificata nel comando originale
+      const result = await parseCommand(command);
+      await updateSelectedEvent(event, result);
+    }
+  };
+
   // Funzione helper per combinare data e ora
   const combineDateTime = (date, time) => {
     if (!date) return new Date().toISOString();
     
+    // Assicurati che sia un oggetto Date
     const result = new Date(date);
     
     if (time) {
-      const timeDate = new Date(time);
-      result.setHours(
-        timeDate.getHours(),
-        timeDate.getMinutes(),
-        0,
-        0
-      );
+      // Se time è un oggetto Date
+      if (time instanceof Date) {
+        result.setHours(
+          time.getHours(),
+          time.getMinutes(),
+          0,
+          0
+        );
+      } 
+      // Se time è una stringa ISO
+      else if (typeof time === 'string') {
+        const timeDate = new Date(time);
+        result.setHours(
+          timeDate.getHours(),
+          timeDate.getMinutes(),
+          0,
+          0
+        );
+      }
     } else {
       // Default: mezzogiorno
       result.setHours(12, 0, 0, 0);
     }
     
     return result.toISOString();
-  };
-
-  // Funzione helper per estrarre la data da una stringa ISO
-  const extractDate = (isoString) => {
-    const date = new Date(isoString);
-    const result = new Date(date);
-    result.setHours(0, 0, 0, 0);
-    return result;
-  };
-
-  // Funzione helper per estrarre l'ora da una stringa ISO
-  const extractTime = (isoString) => {
-    return new Date(isoString);
   };
 
   // Funzione helper per aggiungere ore a una data
@@ -438,14 +561,22 @@ const CommandInput = () => {
       {queryResults && (
         <div className="query-results">
           <h4>
-            {queryResults.type === 'query' && 'Eventi trovati'}
-            {queryResults.type === 'created' && 'Evento creato'}
-            {queryResults.type === 'updated' && 'Evento aggiornato'}
-            {queryResults.type === 'multiple_match' && 'Eventi corrispondenti'}
+            {queryResults.type === 'query' && pendingAction === 'delete' && 'Seleziona l\'evento da eliminare:'}
+            {queryResults.type === 'query' && pendingAction === 'update' && 'Seleziona l\'evento da modificare:'}
+            {queryResults.type === 'query' && !pendingAction && 'Eventi trovati:'}
+            {queryResults.type === 'created' && 'Evento creato:'}
+            {queryResults.type === 'updated' && 'Evento aggiornato:'}
+            {queryResults.type === 'multiple_match' && pendingAction === 'delete' && 'Seleziona l\'evento da eliminare:'}
+            {queryResults.type === 'multiple_match' && pendingAction === 'update' && 'Seleziona l\'evento da modificare:'}
           </h4>
           
           {queryResults.events.map((event, index) => (
-            <div key={index} className="event-item">
+            <div 
+              key={index} 
+              className={`event-item ${pendingAction ? 'selectable' : ''}`}
+              onClick={pendingAction ? () => handleEventSelect(event) : undefined}
+              style={pendingAction ? { cursor: 'pointer' } : {}}
+            >
               <div className="event-title">{event.summary}</div>
               <div className="event-time">
                 {formatDateTime(event.start.dateTime || event.start.date)}
@@ -453,6 +584,11 @@ const CommandInput = () => {
               {event.location && (
                 <div className="event-location">
                   Luogo: {event.location}
+                </div>
+              )}
+              {pendingAction && (
+                <div className="event-action-hint" style={{ color: '#4285f4', marginTop: '5px', fontSize: '0.9em' }}>
+                  {pendingAction === 'delete' ? 'Clicca per eliminare' : 'Clicca per modificare'}
                 </div>
               )}
             </div>
@@ -465,8 +601,9 @@ const CommandInput = () => {
         <ul>
           <li>"Crea riunione con Mario domani alle 10"</li>
           <li>"Aggiungi appuntamento dal dentista venerdì alle 15:30"</li>
-          <li>"Mostra appuntamenti di lunedì"</li>
-          <li>"Quali eventi ho la prossima settimana?"</li>
+          <li>"Ricordami di comprare il pane stasera alle 18"</li>
+          <li>"Mostra appuntamenti di domani"</li>
+          <li>"Quali eventi ho questa settimana?"</li>
           <li>"Sposta la riunione di team a giovedì alle 14"</li>
           <li>"Elimina l'appuntamento dal dentista"</li>
         </ul>

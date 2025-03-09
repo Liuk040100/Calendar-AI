@@ -1,5 +1,6 @@
 import ParserInterface from '../interfaces/ParserInterface';
 import CommandSchema from '../models/CommandSchema';
+import { createCalendarParser } from './createCalendarParser';
 
 /**
  * Implementazione del parser basata su Gemini (Google AI)
@@ -11,14 +12,35 @@ export class LLMParser extends ParserInterface {
     this.config = {
       apiKey: config.apiKey || import.meta.env.VITE_GEMINI_API_KEY,
       endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
+      configPath: './calendar_config.json', // Percorso configurazione per prompt builder
       ...config
     };
     
     this.isConfigured = !!this.config.apiKey;
+    this.promptBuilder = null;
+
     console.log('LLMParser inizializzato:', { 
       isConfigured: this.isConfigured, 
       apiKeyPresente: !!this.config.apiKey
     });
+
+    // Inizializza il builder di prompt
+    this._initPromptBuilder();
+  }
+
+  /**
+   * Inizializza il builder di prompt
+   * @private
+   */
+  async _initPromptBuilder() {
+    try {
+      this.promptBuilder = await createCalendarParser(this.config.configPath);
+      console.log('Prompt builder inizializzato');
+    } catch (error) {
+      console.error('Errore durante l\'inizializzazione del prompt builder:', error);
+      // Fallback a null, verrà ritentato quando necessario
+      this.promptBuilder = null;
+    }
   }
   
   /**
@@ -42,7 +64,21 @@ export class LLMParser extends ParserInterface {
     }
     
     try {
-      const prompt = this._buildPrompt(text);
+      // Se il promptBuilder non è stato inizializzato, riprova
+      if (!this.promptBuilder) {
+        await this._initPromptBuilder();
+        
+        // Se ancora non è disponibile, segnala errore
+        if (!this.promptBuilder) {
+          throw new Error('Impossibile inizializzare il prompt builder');
+        }
+      }
+
+      // Genera il prompt usando il builder
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0]; // YYYY-MM-DD
+      const prompt = this.promptBuilder(text, todayStr);
+      
       console.log('Prompt per Gemini:', prompt);
       
       const response = await fetch(`${this.config.endpoint}?key=${this.config.apiKey}`, {
@@ -124,7 +160,74 @@ export class LLMParser extends ParserInterface {
   _fixCommonIssues(response, originalText) {
     const lowerText = originalText.toLowerCase();
     
-    // Sistemazione problema fuso orario per le date/ore
+    // ===== CORREZIONE TITOLI =====
+    if (response.intent === 'create' && response.eventData && response.eventData.title) {
+      let newTitle = response.eventData.title;
+      let titoloCorretto = false;
+      
+      // 1. Pattern "chiamato/intitolato/denominato X"
+      const titlePatterns = [
+        /(?:un |una |l[''])?(?:evento|appuntamento|riunione|incontro)(?:\s+(?:chiamato|intitolato|denominato|dal nome|di nome))\s+["']?([^"'\n]+?)["']?(?:\s+(?:per|il|alle|domani|oggi|alle|dalle|da|con|al|a)\s+|$)/i,
+        /(?:chiamato|intitolato|denominato|dal nome|di nome)\s+["']?([^"'\n]+?)["']?(?:\s+(?:per|il|alle|domani|oggi|alle|dalle|da|con|al|a)\s+|$)/i
+      ];
+      
+      for (const pattern of titlePatterns) {
+        const match = originalText.match(pattern);
+        if (match && match[1]) {
+          newTitle = match[1].trim();
+          titoloCorretto = true;
+          break;
+        }
+      }
+      
+      // 2. Caso "ricordami di X"
+      if (!titoloCorretto && lowerText.includes('ricordami')) {
+        const ricordamiMatch = originalText.match(/ricordami\s+(?:di\s+)?(.+?)(?:\s+(?:per|il|alle|domani|oggi)\s+|$)/i);
+        if (ricordamiMatch && ricordamiMatch[1]) {
+          newTitle = ricordamiMatch[1].trim();
+          titoloCorretto = true;
+        }
+      }
+      
+      // 3. Filtraggio generico - rimuove parole problematiche
+      if (!titoloCorretto) {
+        // Rimuovi parole problematiche che potrebbero essere state incluse erroneamente
+        const wordsToRemove = [
+          'un evento', 'una evento', 'l\'evento', 'evento',
+          'un appuntamento', 'una appuntamento', 'l\'appuntamento', 'appuntamento',
+          'una riunione', 'un riunione', 'la riunione', 'riunione',
+          'chiamato', 'intitolato', 'denominato', 'dal nome', 'di nome'
+        ];
+        
+        let tempTitle = newTitle;
+        for (const word of wordsToRemove) {
+          if (tempTitle.toLowerCase().startsWith(word.toLowerCase() + ' ')) {
+            tempTitle = tempTitle.substring(word.length).trim();
+          }
+        }
+        
+        // Solo se la pulizia ha fatto qualcosa di sensato
+        if (tempTitle && tempTitle.length > 2 && tempTitle !== newTitle) {
+          newTitle = tempTitle;
+          titoloCorretto = true;
+        }
+      }
+      
+      // 4. Pulizia finale
+      // Rimuovi virgolette e spazi in eccesso
+      newTitle = newTitle.replace(/^["']+|["']+$/g, '').trim();
+      
+      // Rimuovi parole temporali alla fine ("per domani", "alle 15", ecc.)
+      newTitle = newTitle.replace(/\s+(?:per|al|alle|dalle|da)\s+(?:\d{1,2}|\d{1,2}[:.]\d{2}|domani|oggi|lunedì|martedì|mercoledì|giovedì|venerdì|sabato|domenica).*$/i, '');
+      
+      // Log e aggiornamento solo se c'è stata una modifica
+      if (newTitle !== response.eventData.title) {
+        console.log(`Correzione titolo: da "${response.eventData.title}" a "${newTitle}"`);
+        response.eventData.title = newTitle;
+      }
+    }
+    
+    // ===== CORREZIONE DATE E ORARI =====
     if (response.timeData) {
       ['startTime', 'endTime'].forEach(timeField => {
         if (response.timeData[timeField] && typeof response.timeData[timeField] === 'string') {
@@ -155,6 +258,7 @@ export class LLMParser extends ParserInterface {
       });
     }
     
+    // ===== CORREZIONE INTENT =====
     // Correzione di intent "read"/"query" per domande sugli appuntamenti
     if ((lowerText.includes('quali') || lowerText.includes('mostra') || 
          lowerText.includes('visualizza') || lowerText.includes('vedi') ||
@@ -276,114 +380,6 @@ export class LLMParser extends ParserInterface {
   async getConfidence(text) {
     return this.isConfigured ? 0.9 : 0;
   }
-  
-  /**
-   * Costruisce il prompt per l'API Gemini
-   * @private
-   * @param {string} text - Il testo del comando
-   * @returns {string} - Prompt completo
-   */
-  _buildPrompt(text) {
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0]; // YYYY-MM-DD
-    
-// Parser Calendar AI - Versione migliorata
-// Questa funzione carica le istruzioni da un file esterno
-async function createCalendarParser(configFilePath = './calendar_config.json') {
-    // Carica la configurazione da un file JSON esterno
-    let config;
-    try {
-      const response = await fetch(configFilePath);
-      config = await response.json();
-    } catch (error) {
-      console.error(`Errore nel caricamento del file di configurazione: ${error}`);
-      // Configurazione predefinita in caso di fallimento
-      config = {
-        includeEventTypeInTitle: true, // Ora è configurabile!
-        defaultDuration: 60,
-        defaultLimit: 10,
-        exampleCommands: []  // Gli esempi sono ora nel file di configurazione
-      };
-    }
-  
-    // Funzione principale del parser
-    return function parseCalendarCommand(text, todayStr) {
-      // La funzione può utilizzare i parametri di configurazione dal file esterno
-      const includeEventTypeInTitle = config.includeEventTypeInTitle;
-      
-      return `Sei un parser specializzato per un'applicazione di calendario chiamata Calendar AI.
-  Analizza il seguente comando in italiano e convertilo in un formato JSON strutturato.
-  
-  OGGI È: ${todayStr}
-  
-  Comando: "${text}"
-  
-  I comandi possono essere di tipo:
-  - create: creazione di un nuovo evento (es. "Crea", "Aggiungi", "Ricordami", "Pianifica")
-  - read: lettura/visualizzazione di eventi esistenti (es. "Mostra", "Visualizza", "Quali sono")
-  - update: modifica di un evento esistente (es. "Modifica", "Aggiorna", "Sposta")
-  - delete: eliminazione di un evento (es. "Elimina", "Cancella", "Rimuovi")
-  - query: interrogazione sul calendario (es. "Cerca", "Trova", domande come "Quali sono gli appuntamenti...")
-  
-  IMPORTANTE PER I COMANDI DI TIPO "query" O "read":
-  - Se l'utente chiede "quali sono gli appuntamenti...", deve essere interpretato come intent "query"
-  - Il titolo deve essere impostato in base al contesto della richiesta
-  - Devi impostare correttamente timeRange in base a eventuali riferimenti temporali
-  
-  IMPORTANTE PER I COMANDI DI TIPO "create":
-  ${includeEventTypeInTitle ? 
-    '- Gli eventi dovrebbero mantenere il nome originale menzionato dall\'utente, incluse parole come "appuntamento", "evento", "riunione" se rilevanti al contesto' : 
-    '- Gli eventi hanno sempre un titolo che NON deve includere parole come "appuntamento", "evento", "riunione"'
-  }
-  ${!includeEventTypeInTitle ? 
-    '- Per esempio, "Aggiungi appuntamento dal dentista" → il titolo deve essere "dal dentista", non "appuntamento dal dentista"' : 
-    '- Per esempio, "Aggiungi appuntamento dal dentista" → il titolo sarà "appuntamento dal dentista"'
-  }
-  ${!includeEventTypeInTitle ? 
-    '- Se il comando è "Ricordami di X", il titolo deve essere semplicemente "X" (es. "Ricordami di comprare il latte" → titolo: "comprare il latte")' : 
-    '- Conserva sempre l\'intento e il contesto originale dell\'utente nel titolo'
-  }
-  
-  ${config.exampleCommands.length > 0 ? 'ESEMPI DI COMANDI CORRETTI:\n\n' + config.exampleCommands.join('\n\n') : ''}
-  
-  Rispondi con un JSON valido che include:
-  {
-    "intent": "l'intento del comando (create, read, update, delete, query)",
-    "confidence": "livello di confidenza nell'interpretazione (0.0-1.0)",
-    "eventData": {
-      "title": "titolo dell'evento",
-      "description": "descrizione dettagliata",
-      "location": "luogo dell'evento",
-      "participants": ["lista", "di", "partecipanti"]
-    },
-    "timeData": {
-      "startDate": "data di inizio in formato ISO o null",
-      "startTime": "ora di inizio in formato ISO o null",
-      "endDate": "data di fine in formato ISO o null",
-      "endTime": "ora di fine in formato ISO o null",
-      "duration": "durata in minuti o null",
-      "recurrence": "pattern di ricorrenza o null"
-    },
-    "queryData": {
-      "timeRange": {
-        "start": "inizio range temporale in formato ISO o null",
-        "end": "fine range temporale in formato ISO o null"
-      },
-      "searchTerm": "termine di ricerca o null",
-      "filterType": "filtro per tipo di evento o null",
-      "limit": "numero massimo di risultati (default ${config.defaultLimit || 10})"
-    },
-    "ambiguities": ["possibili ambiguità"],
-    "missingInfo": ["informazioni mancanti"]
-  }
-  
-  Non includere nessun altro testo oltre al JSON.`;
-    };
-  }
-  
-  // Esempio di utilizzo
-  // const parser = await createCalendarParser('./mio_file_config.json');
-  // const prompt = parser("Aggiungi appuntamento dal dentista domani alle 15", "2025-03-09");
   
   /**
    * Estrae e analizza il JSON dalla risposta dell'API
