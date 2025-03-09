@@ -1,8 +1,4 @@
 import { format, parse, isValid, addDays } from 'date-fns';
-
-// Esporta un'istanza singleton come default export
-const regexParser = new RegexParser();
-export default regexParser;
 import { it } from 'date-fns/locale';
 import ParserInterface from '../interfaces/ParserInterface';
 import CommandSchema from '../models/CommandSchema';
@@ -221,8 +217,14 @@ export class RegexParser extends ParserInterface {
   
   /**
    * Estrae i dati temporali dal testo del comando
-   * @private
-   * @param {string} text - Il testo del comando
+        }
+      }
+    }
+    
+    // Esporta un'istanza singleton come default export
+    const regexParser = new RegexParser();
+    export default regexParser;
+    
    * @param {CommandSchema} schema - Lo schema da popolare
    */
   _extractTimeData(text, schema) {
@@ -642,15 +644,19 @@ export class RegexParser extends ParserInterface {
    * @param {number} dayOfWeek - Giorno della settimana (0=domenica, 1=lunedì, ...)
    * @returns {Date} - Data del prossimo giorno della settimana specificato
    */
-    _getNextDayOfWeek(date, dayOfWeek) {
-      const resultDate = new Date(date.getTime());
-      resultDate.setDate(date.getDate() + (7 + dayOfWeek - date.getDay()) % 7);
-      
-      // Se la data risultante è oggi, aggiungi 7 giorni per ottenere la prossima settimana
-      if (resultDate.toDateString() === date.toDateString()) {
-        resultDate.setDate(resultDate.getDate() + 7);
-      }
-      
-      return resultDate;
+  _getNextDayOfWeek(date, dayOfWeek) {
+    const resultDate = new Date(date.getTime());
+    resultDate.setDate(date.getDate() + (7 + dayOfWeek - date.getDay()) % 7);
+    
+    // Se la data risultante è oggi, aggiungi 7 giorni per ottenere la prossima settimana
+    if (resultDate.toDateString() === date.toDateString()) {
+      resultDate.setDate(resultDate.getDate() + 7);
     }
+    
+    return resultDate;
   }
+} // <-- Assicurati che la classe sia chiusa correttamente qui
+
+// Crea e esporta l'istanza singleton
+const regexParser = new RegexParser();
+export default regexParser;

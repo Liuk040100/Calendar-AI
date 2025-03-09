@@ -282,4 +282,6 @@ export class LLMParser extends ParserInterface {
   }
 }
 
-export default LLMParser;
+// Esporta un'istanza singleton come default export
+const llmParser = new LLMParser();
+export default llmParser;

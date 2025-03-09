@@ -147,3 +147,6 @@ export class ParserFactory {
     };
   }
 }
+// Alla fine del file ParserFactory.js
+const parserFactory = new ParserFactory();
+export default parserFactory;
