@@ -12,6 +12,8 @@ export class IntentValidator {
    * @returns {Object} - Risultato della validazione con suggerimenti
    */
   validate(commandSchema) {
+    console.debug('IntentValidator.validate chiamato con:', commandSchema);
+    
     // Verifica che lo schema non sia nullo
     if (!commandSchema) {
       return {
@@ -34,23 +36,31 @@ export class IntentValidator {
     }
     
     // Validazione specifica per ogni tipo di intent
+    let validationResult;
     switch (commandSchema.intent) {
       case 'create':
-        return this._validateCreateIntent(commandSchema);
+        validationResult = this._validateCreateIntent(commandSchema);
+        break;
       case 'read':
       case 'query':
-        return this._validateReadIntent(commandSchema);
+        validationResult = this._validateReadIntent(commandSchema);
+        break;
       case 'update':
-        return this._validateUpdateIntent(commandSchema);
+        validationResult = this._validateUpdateIntent(commandSchema);
+        break;
       case 'delete':
-        return this._validateDeleteIntent(commandSchema);
+        validationResult = this._validateDeleteIntent(commandSchema);
+        break;
       default:
-        return {
+        validationResult = {
           isValid: false,
           errors: [`Intent "${commandSchema.intent}" non supportato`],
           suggestions: ['I comandi supportati sono: crea, mostra, modifica, elimina']
         };
     }
+    
+    console.debug('Risultato validazione:', validationResult);
+    return validationResult;
   }
   
   /**
@@ -111,8 +121,8 @@ export class IntentValidator {
     const missingInfo = [];
     
     // Per query, è sufficiente avere o un intervallo temporale o un termine di ricerca
-    const hasTimeRange = schema.queryData.timeRange;
-    const hasSearchTerm = schema.queryData.searchTerm;
+    const hasTimeRange = schema.queryData && schema.queryData.timeRange;
+    const hasSearchTerm = schema.queryData && schema.queryData.searchTerm;
     
     if (!hasTimeRange && !hasSearchTerm) {
       errors.push('Criteri di ricerca mancanti');
@@ -142,17 +152,17 @@ export class IntentValidator {
     const missingInfo = [];
     
     // Per aggiornare serve identificare l'evento
-    if (!schema.eventData.title) {
+    if (!schema.eventData || !schema.eventData.title) {
       errors.push('Non è chiaro quale evento modificare');
       suggestions.push('Specifica il titolo dell\'evento da modificare');
       missingInfo.push('event identifier');
     }
     
     // Verifica che ci sia almeno un campo da aggiornare
-    const hasUpdates = schema.timeData.startDate || 
-                       schema.timeData.startTime || 
-                       schema.eventData.description || 
-                       schema.eventData.location;
+    const hasUpdates = (schema.timeData && schema.timeData.startDate) || 
+                       (schema.timeData && schema.timeData.startTime) || 
+                       (schema.eventData && schema.eventData.description) || 
+                       (schema.eventData && schema.eventData.location);
                        
     if (!hasUpdates) {
       errors.push('Non è chiaro cosa modificare nell\'evento');
@@ -182,7 +192,7 @@ export class IntentValidator {
     const missingInfo = [];
     
     // Per eliminare serve identificare chiaramente l'evento
-    if (!schema.eventData.title) {
+    if (!schema.eventData || !schema.eventData.title) {
       errors.push('Non è chiaro quale evento eliminare');
       suggestions.push('Specifica il titolo dell\'evento da eliminare');
       missingInfo.push('event identifier');
@@ -199,6 +209,6 @@ export class IntentValidator {
   }
 }
 
-// Esporta un'istanza singleton
+// Esporta un'istanza singleton come default export
 const intentValidator = new IntentValidator();
 export default intentValidator;

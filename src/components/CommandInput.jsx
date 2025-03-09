@@ -8,6 +8,8 @@ const CommandInput = () => {
   const [feedback, setFeedback] = useState('');
   const [feedbackType, setFeedbackType] = useState('info'); // 'info', 'success', 'error'
   const [suggestions, setSuggestions] = useState([]);
+  const [debugInfo, setDebugInfo] = useState('');
+  const [showDebug, setShowDebug] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -25,25 +27,63 @@ const CommandInput = () => {
     setSuggestions([]);
     
     try {
-      // Analizza il comando con il nuovo parser
+      console.log('Elaborazione comando:', command);
+      
+      // Analizza il comando con il parser
       const result = await parseCommand(command);
-      const { commandSchema, validationResult } = result;
+      
+      // Aggiorna info di debug
+      setDebugInfo(JSON.stringify(result, null, 2));
+      
+      console.log('Risultato parser:', result);
+      
+      // Verifica che il risultato sia valido
+      if (!result || result.valid === undefined) {
+        throw new Error('Formato di risposta del parser non valido');
+      }
       
       // Se il comando non è valido, mostra feedback e suggerimenti
-      if (!validationResult.isValid) {
-        setFeedback(validationResult.errors.join('. '));
+      if (!result.valid) {
+        const errorMsg = result.errors && result.errors.length > 0 
+          ? result.errors.join('. ') 
+          : 'Comando non riconosciuto';
+        
+        setFeedback(errorMsg);
         setFeedbackType('error');
-        setSuggestions(validationResult.suggestions);
+        
+        // Se ci sono suggerimenti nel nuovo formato, usali
+        if (result.suggestions && result.suggestions.length > 0) {
+          setSuggestions(result.suggestions);
+        } else {
+          setSuggestions([
+            'Prova a essere più specifico',
+            'Includi data e ora nel comando',
+            'Specifica chiaramente l\'azione (crea, mostra, ecc.)'
+          ]);
+        }
+        
         setProcessing(false);
         return;
       }
       
       // Gestisci diversi tipi di azioni
-      switch (commandSchema.intent) {
+      switch (result.action) {
         case 'create': {
           try {
-            // Converti lo schema in un evento Google Calendar
-            const eventData = commandSchema.toGoogleCalendarEvent();
+            // Crea un evento per Google Calendar
+            const eventData = {
+              summary: result.title,
+              description: result.description || '',
+              start: {
+                dateTime: combineDateTime(result.date, result.time),
+                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+              },
+              end: {
+                // Per ora impostiamo 1 ora di durata come default
+                dateTime: addHours(combineDateTime(result.date, result.time), 1),
+                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+              }
+            };
             
             // Crea l'evento
             await createEvent(eventData);
@@ -60,14 +100,20 @@ const CommandInput = () => {
         case 'read':
         case 'query': {
           try {
-            // Converti lo schema in parametri di ricerca
-            const searchParams = commandSchema.toGoogleCalendarSearchParams();
+            // Calcola intervallo di ricerca in base alla data
+            const today = new Date();
+            const timeMin = result.date ? new Date(result.date) : today;
+            
+            // Imposta fine giornata per la data specificata
+            const timeMax = result.date ? 
+              new Date(new Date(result.date).setHours(23, 59, 59, 999)) : 
+              new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000); // Una settimana se non specificata
             
             // Ottieni gli eventi
             const events = await getEvents(
-              searchParams.timeMin, 
-              searchParams.timeMax, 
-              searchParams.maxResults
+              timeMin.toISOString(), 
+              timeMax.toISOString(), 
+              10
             );
             
             if (events && events.length > 0) {
@@ -111,9 +157,43 @@ const CommandInput = () => {
       console.error('Errore durante l\'elaborazione del comando:', error);
       setFeedback('Si è verificato un errore: ' + error.message);
       setFeedbackType('error');
+      setDebugInfo(JSON.stringify({ error: error.message, stack: error.stack }, null, 2));
     } finally {
       setProcessing(false);
     }
+  };
+
+  // Funzione helper per combinare data e ora
+  const combineDateTime = (date, time) => {
+    if (!date) return new Date().toISOString();
+    
+    const result = new Date(date);
+    
+    if (time) {
+      result.setHours(
+        time.getHours(),
+        time.getMinutes(),
+        0,
+        0
+      );
+    } else {
+      // Default: mezzogiorno
+      result.setHours(12, 0, 0, 0);
+    }
+    
+    return result.toISOString();
+  };
+
+  // Funzione helper per aggiungere ore a una data
+  const addHours = (dateString, hours) => {
+    const date = new Date(dateString);
+    date.setHours(date.getHours() + hours);
+    return date.toISOString();
+  };
+
+  // Toggle per la modalità debug
+  const toggleDebug = () => {
+    setShowDebug(!showDebug);
   };
 
   return (
@@ -164,6 +244,29 @@ const CommandInput = () => {
           <li>"Quali eventi ho la prossima settimana?"</li>
           <li>"Quando sono andato dal dentista l'ultima volta?"</li>
         </ul>
+      </div>
+      
+      {/* Pulsante per attivare la modalità debug - visibile solo in dev */}
+      <div style={{ marginTop: '20px', textAlign: 'center' }}>
+        <button 
+          onClick={toggleDebug} 
+          style={{ 
+            padding: '6px 12px', 
+            backgroundColor: '#f1f3f4', 
+            border: 'none', 
+            borderRadius: '4px',
+            fontSize: '12px',
+            cursor: 'pointer'
+          }}
+        >
+          {showDebug ? 'Nascondi Debug' : 'Mostra Debug'}
+        </button>
+      </div>
+      
+      {/* Pannello di debug */}
+      <div className={`debug-panel ${showDebug ? 'visible' : ''}`} style={{ display: showDebug ? 'block' : 'none' }}>
+        <h4>Informazioni di Debug</h4>
+        <pre className="debug-info">{debugInfo}</pre>
       </div>
     </div>
   );

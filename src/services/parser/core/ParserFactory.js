@@ -1,5 +1,6 @@
-import RegexParser from '../implementations/RegexParser';
-import LLMParser from '../implementations/LLMParser';
+// Importa le istanze singleton
+import regexParser from '../implementations/RegexParser';
+import llmParser from '../implementations/LLMParser';
 
 /**
  * Factory per la creazione e selezione del parser appropriato
@@ -30,9 +31,20 @@ export class ParserFactory {
       ...config
     };
     
-    // Inizializza i parser
-    this.regexParser = new RegexParser();
-    this.llmParser = new LLMParser(this.config.llm);
+    console.debug('ParserFactory inizializzato con config:', { 
+      useRegexOnly: this.config.useRegexOnly, 
+      useRegexFallback: this.config.useRegexFallback,
+      llmConfigured: !!this.config.llm.apiKey
+    });
+    
+    // Utilizza le istanze singleton
+    this.regexParser = regexParser;
+    this.llmParser = llmParser;
+    
+    // Aggiorna la configurazione del LLM parser
+    if (this.config.llm && this.config.llm.apiKey) {
+      this.llmParser = new LLMParser(this.config.llm);
+    }
     
     // Indica se l'LLM è configurato correttamente
     this.isLLMConfigured = !!this.config.llm.apiKey && !this.config.useRegexOnly;
@@ -46,6 +58,7 @@ export class ParserFactory {
   async getBestParser(text) {
     // Se è configurato per usare solo regex, restituisci quello
     if (this.config.useRegexOnly || !this.isLLMConfigured) {
+      console.debug('Usando RegexParser (configurazione: useRegexOnly)');
       return {
         parser: this.regexParser,
         method: 'regex'
@@ -56,9 +69,16 @@ export class ParserFactory {
     const regexConfidence = await this.regexParser.getConfidence(text);
     const llmConfidence = await this.llmParser.getConfidence(text);
     
+    console.debug('Confronto confidenza:', { 
+      regex: regexConfidence, 
+      llm: llmConfidence, 
+      threshold: this.config.confidenceThreshold 
+    });
+    
     // Se il parser regex ha sufficiente confidenza, usalo
     if (regexConfidence >= this.config.confidenceThreshold && 
         (regexConfidence >= llmConfidence || this.config.useRegexFallback)) {
+      console.debug('Usando RegexParser (maggiore confidenza)');
       return {
         parser: this.regexParser,
         method: 'regex'
@@ -66,6 +86,7 @@ export class ParserFactory {
     }
     
     // Altrimenti, usa l'LLM
+    console.debug('Usando LLMParser');
     return {
       parser: this.llmParser,
       method: 'llm'
@@ -78,11 +99,16 @@ export class ParserFactory {
    * @returns {Promise<import('./models/CommandSchema').CommandSchema>} - Oggetto schema del comando analizzato
    */
   async parseCommand(text) {
+    console.debug('ParserFactory.parseCommand chiamato con:', text);
+    
     // Ottieni il parser più adatto
     const { parser } = await this.getBestParser(text);
     
     // Analizza il comando
-    return await parser.parseCommand(text);
+    const result = await parser.parseCommand(text);
+    console.debug('ParserFactory risultato parsing:', result);
+    
+    return result;
   }
   
   /**
@@ -95,8 +121,11 @@ export class ParserFactory {
       ...newConfig
     };
     
+    console.debug('ParserFactory config aggiornata:', newConfig);
+    
     // Aggiorna la configurazione dell'LLM parser se necessario
     if (newConfig.llm) {
+      // Crea una nuova istanza di LLMParser con la configurazione aggiornata
       this.llmParser = new LLMParser({
         ...this.config.llm,
         ...newConfig.llm
@@ -118,7 +147,3 @@ export class ParserFactory {
     };
   }
 }
-
-// Esporta un'istanza singleton
-const parserFactory = new ParserFactory();
-export default parserFactory;

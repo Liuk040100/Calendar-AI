@@ -1,4 +1,8 @@
 import { format, parse, isValid, addDays } from 'date-fns';
+
+// Esporta un'istanza singleton come default export
+const regexParser = new RegexParser();
+export default regexParser;
 import { it } from 'date-fns/locale';
 import ParserInterface from '../interfaces/ParserInterface';
 import CommandSchema from '../models/CommandSchema';
@@ -61,6 +65,8 @@ export class RegexParser extends ParserInterface {
    * @returns {Promise<CommandSchema>} - Oggetto schema del comando analizzato
    */
   async parseCommand(text) {
+    console.debug('RegexParser.parseCommand chiamato con:', text);
+    
     // Inizializza uno schema comando vuoto
     const commandSchema = new CommandSchema({
       parsingMetadata: {
@@ -84,8 +90,11 @@ export class RegexParser extends ParserInterface {
       commandSchema.intent = 'query';
     }
     
+    console.debug('Intent rilevato:', commandSchema.intent);
+    
     // Se non abbiamo capito l'intent, non possiamo procedere
     if (!commandSchema.intent) {
+      console.debug('Nessun intent rilevato');
       return commandSchema;
     }
     
@@ -105,6 +114,8 @@ export class RegexParser extends ParserInterface {
     
     // Calcola un livello di confidenza euristico
     commandSchema.confidence = this._calculateConfidence(text, commandSchema);
+    
+    console.debug('Schema comando finale:', JSON.stringify(commandSchema, null, 2));
     
     return commandSchema;
   }
@@ -631,17 +642,15 @@ export class RegexParser extends ParserInterface {
    * @param {number} dayOfWeek - Giorno della settimana (0=domenica, 1=lunedì, ...)
    * @returns {Date} - Data del prossimo giorno della settimana specificato
    */
-  _getNextDayOfWeek(date, dayOfWeek) {
-    const resultDate = new Date(date.getTime());
-    resultDate.setDate(date.getDate() + (7 + dayOfWeek - date.getDay()) % 7);
-    
-    // Se la data risultante è oggi, aggiungi 7 giorni per ottenere la prossima settimana
-    if (resultDate.toDateString() === date.toDateString()) {
-      resultDate.setDate(resultDate.getDate() + 7);
+    _getNextDayOfWeek(date, dayOfWeek) {
+      const resultDate = new Date(date.getTime());
+      resultDate.setDate(date.getDate() + (7 + dayOfWeek - date.getDay()) % 7);
+      
+      // Se la data risultante è oggi, aggiungi 7 giorni per ottenere la prossima settimana
+      if (resultDate.toDateString() === date.toDateString()) {
+        resultDate.setDate(resultDate.getDate() + 7);
+      }
+      
+      return resultDate;
     }
-    
-    return resultDate;
   }
-}
-
-export default RegexParser;

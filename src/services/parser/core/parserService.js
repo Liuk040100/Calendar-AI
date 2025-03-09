@@ -20,8 +20,14 @@ export class ParserService {
       // Ottieni lo schema del comando dal factory
       const commandSchema = await this.factory.parseCommand(text);
       
+      // Aggiungi log di debug
+      console.debug('Schema comando generato:', commandSchema);
+      
       // Valida l'intent
       const validationResult = intentValidator.validate(commandSchema);
+      
+      // Aggiungi log di debug
+      console.debug('Risultato validazione:', validationResult);
       
       // Restituisci sia lo schema che il risultato della validazione
       return {
@@ -88,23 +94,73 @@ export default parserService;
 
 // Esporta la funzione parseCommand direttamente per compatibilità con il vecchio codice
 export const parseCommand = async (text) => {
-  const result = await parserService.parseCommand(text);
-  
-  // Per compatibilità con il vecchio codice, adattiamo il risultato
-  if (result.validationResult.isValid) {
-    const { commandSchema } = result;
+  try {
+    console.debug('parseCommand chiamato con:', text);
+    const result = await parserService.parseCommand(text);
+    console.debug('Risultato ottenuto dal parserService:', result);
     
-    // Converti lo schema nel formato atteso dal codice legacy
-    return {
-      action: commandSchema.intent,
-      date: commandSchema.timeData.startDate,
-      time: commandSchema.timeData.startTime,
-      title: commandSchema.eventData.title,
-      description: commandSchema.eventData.description,
-      valid: true
-    };
-  } else {
-    // Se non valido, restituisci un oggetto compatibile con struttura minima
+    // Se abbiamo un risultato completo
+    if (result && result.commandSchema && result.validationResult) {
+      const { commandSchema, validationResult } = result;
+      
+      // Per compatibilità con il vecchio codice, adattiamo il risultato
+      if (validationResult.isValid) {
+        // Estrai i valori in modo sicuro con valori predefiniti
+        const intent = commandSchema.intent || null;
+        const startDate = commandSchema.timeData && commandSchema.timeData.startDate || null;
+        const startTime = commandSchema.timeData && commandSchema.timeData.startTime || null;
+        const title = commandSchema.eventData && commandSchema.eventData.title || null;
+        const description = commandSchema.eventData && commandSchema.eventData.description || null;
+        
+        console.debug('Restituisco oggetto valido:', {
+          action: intent,
+          date: startDate,
+          time: startTime,
+          title,
+          description
+        });
+        
+        return {
+          action: intent,
+          date: startDate,
+          time: startTime,
+          title,
+          description,
+          valid: true
+        };
+      } else {
+        // Se non valido, restituisci un oggetto compatibile con struttura minima
+        const errors = validationResult.errors || ['Comando non valido'];
+        
+        console.debug('Restituisco oggetto non valido con errori:', errors);
+        
+        return {
+          action: null,
+          date: null,
+          time: null,
+          title: null,
+          description: null,
+          valid: false,
+          errors
+        };
+      }
+    } else {
+      // Fallback se qualcosa è andato storto
+      console.debug('Risultato incompleto dal parser, restituisco fallback');
+      
+      return {
+        action: null,
+        date: null,
+        time: null,
+        title: null,
+        description: null,
+        valid: false,
+        errors: ['Errore durante l\'analisi del comando']
+      };
+    }
+  } catch (error) {
+    console.error('Errore in parseCommand:', error);
+    
     return {
       action: null,
       date: null,
@@ -112,7 +168,7 @@ export const parseCommand = async (text) => {
       title: null,
       description: null,
       valid: false,
-      errors: result.validationResult.errors
+      errors: [`Errore: ${error.message}`]
     };
   }
 };

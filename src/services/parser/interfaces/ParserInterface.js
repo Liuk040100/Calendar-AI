@@ -30,6 +30,8 @@ export class ParserInterface {
     async getConfidence(text) {
       throw new Error('Il metodo getConfidence deve essere implementato dalle classi derivate');
     }
-  }
-  
-  export default ParserInterface;
+}
+
+// Non è necessario un'istanza singleton per l'interfaccia, 
+// ma esportiamo l'interfaccia come default export per coerenza
+export default ParserInterface;
